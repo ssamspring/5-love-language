@@ -1,0 +1,215 @@
+# -*- coding: utf-8 -*-
+"""
+함께 성장하는 이성교제 · 1차시 웹앱
+'나의 표현·수용 방식 돌아보기' (자기 성찰 체크리스트)
+
+설계 원칙
+- 진단이 아니라 성찰 도구: "당신은 ○○형" 같은 유형 라벨을 붙이지 않는다.
+- 익명·비저장: 이름 입력이 없고, 입력값은 서버에 저장하지 않는다(세션 메모리에서만 사용).
+- 결과는 개인 화면에서만 확인한다. 공유는 학생이 원할 때만, 앱 밖(패들렛)에서 한다.
+- 신체 접촉 문항은 "상대가 원할 때만"을 전제로 쓰고, 결과 화면에 동의·거절 안내를 항상 보여 준다.
+
+실행: streamlit run app.py
+"""
+import altair as alt
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(page_title="나의 표현·수용 방식 돌아보기", page_icon="💬", layout="centered")
+
+# ------------------------------------------------------------------
+# 교사가 수정할 수 있는 영역 (문항·문구)
+# ------------------------------------------------------------------
+LANGS = ["인정하는 말", "선물", "도움 행동", "함께하는 시간", "신체 접촉"]
+
+LANG_DESC = {
+    "인정하는 말": "고마움·칭찬·응원을 말이나 글로 표현하기",
+    "선물": "작은 선물이나 손편지로 마음 전하기",
+    "도움 행동": "필요한 일을 대신 하거나 도와주기",
+    "함께하는 시간": "시간을 내어 함께 있어 주고 집중해 주기",
+    "신체 접촉": "하이파이브, 토닥임 같은 가벼운 접촉 (상대가 원할 때만)",
+}
+
+# 받을 때: 내가 이렇게 받으면 마음이 편하고 기쁘다
+RECEIVE_ITEMS = [
+    "가까운 사람이 \"고마워\", \"잘하고 있어\"처럼 말로 인정해 줄 때 마음이 가장 든든하다.",
+    "작은 선물이나 손편지를 받으면 나를 생각해 준다는 느낌이 크게 든다.",
+    "내가 힘들 때 말없이 도와주거나 대신 해 주는 행동이 큰 힘이 된다.",
+    "상대가 휴대폰을 내려놓고 나와 시간을 함께 보내 줄 때 소중한 사람이 된 것 같다.",
+    "내가 원할 때 하이파이브나 어깨 토닥임 같은 가벼운 접촉을 받으면 위로가 된다. (원하지 않을 때는 하지 않기를 바란다.)",
+]
+
+# 표현할 때: 나는 이렇게 마음을 표현하는 편이다
+GIVE_ITEMS = [
+    "친구가 잘한 일이 있으면 \"대단하다\", \"고마워\"라고 말로 자주 표현한다.",
+    "생일이나 기념일에 작은 선물이나 편지를 준비해서 마음을 전하는 편이다.",
+    "친구가 바빠 보이면 말없이 도와주거나 대신 해 주는 식으로 마음을 표현한다.",
+    "마음을 전하고 싶을 때 같이 밥을 먹거나 이야기하며 시간을 보내려고 한다.",
+    "상대가 괜찮다고 할 때, 하이파이브나 토닥임으로 응원을 표현하는 편이다.",
+]
+
+SCALE = {"전혀 아니다": 1, "아니다": 2, "그렇다": 3, "매우 그렇다": 4}
+GAP_THRESHOLD = 2  # '받을 때'와 '표현할 때'의 점수 차가 이 값 이상이면 "다름 발견"으로 안내
+
+PAIR_QUESTIONS = [
+    "내가 편하게 받는 표현과 짝이 편하게 받는 표현은 어디가 같고, 어디가 다른가요?",
+    "내가 자주 하는 표현을 상대가 다르게 받아들일 수 있는 상황을 하나 떠올려 보세요.",
+    "서로 다른 방식일 때, 오해를 줄이려면 무엇을 물어보면 좋을까요?",
+]
+
+# ------------------------------------------------------------------
+# 화면 구성
+# ------------------------------------------------------------------
+st.title("나의 표현·수용 방식 돌아보기")
+st.caption("함께 성장하는 이성교제 · 1차시")
+
+
+def reset_all():
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+
+
+def render_intro():
+    st.markdown(
+        """
+- **정답도, 좋고 나쁨도 없어요.** 친구·가족·또래처럼 가까운 사람과의 관계를 떠올리며 솔직하게 골라 보세요.
+- **이름을 쓰지 않아요.** 입력한 내용은 저장되지 않고, 창을 닫거나 새로고침하면 사라져요.
+- **결과는 내 화면에서만 보여요.** 친구에게 보여 줄지는 내가 정해요.
+"""
+    )
+
+
+def render_form():
+    render_intro()
+    with st.form("checklist"):
+        st.subheader("A. 내가 이렇게 받을 때 마음이 편하고 기뻐요")
+        for i, text in enumerate(RECEIVE_ITEMS):
+            st.radio(f"A{i + 1}. {text}", list(SCALE.keys()), index=None, horizontal=True, key=f"recv_{i}")
+
+        st.subheader("B. 나는 이렇게 마음을 표현하는 편이에요")
+        for i, text in enumerate(GIVE_ITEMS):
+            st.radio(f"B{i + 1}. {text}", list(SCALE.keys()), index=None, horizontal=True, key=f"give_{i}")
+
+        st.subheader("C. 한 줄 성찰 (선택)")
+        st.text_area(
+            "나는 ______ 같은 표현을 받을 때 가장 편하다. 그런데 내 친구나 가족은 ______를 더 좋아할 수도 있다.",
+            key="reflect_1",
+            height=80,
+            max_chars=200,
+        )
+        st.caption("실명, 학교, 실제 연애 이야기처럼 개인을 알 수 있는 내용은 쓰지 않아요.")
+
+        submitted = st.form_submit_button("결과 보기")
+
+    if submitted:
+        unanswered = [
+            f"{p}{i + 1}"
+            for p, n in (("A", "recv"), ("B", "give"))
+            for i in range(5)
+            if st.session_state.get(f"{n}_{i}") is None
+        ]
+        if unanswered:
+            st.warning("아직 고르지 않은 문항이 있어요: " + ", ".join(unanswered))
+            return
+        st.session_state["result"] = {
+            "recv": [SCALE[st.session_state[f"recv_{i}"]] for i in range(5)],
+            "give": [SCALE[st.session_state[f"give_{i}"]] for i in range(5)],
+            "reflect": st.session_state.get("reflect_1", "").strip(),
+        }
+        st.rerun()
+
+
+def top_names(scores):
+    m = max(scores)
+    if m <= 2:
+        return [], m
+    return [LANGS[i] for i, s in enumerate(scores) if s == m], m
+
+
+def render_result():
+    res = st.session_state["result"]
+    recv, give = res["recv"], res["give"]
+
+    st.success("체크가 끝났어요. 아래 결과는 나를 이해하기 위한 참고일 뿐, 나의 '유형'이 아니에요. 사람과 상황에 따라 달라질 수 있어요.")
+
+    # 1) 한눈에 보기
+    st.subheader("1. 내 표현 지도")
+    df = pd.DataFrame(
+        {"내가 편하게 받는 표현": recv, "내가 자주 하는 표현": give},
+        index=LANGS,
+    )
+    long = df.reset_index(names="표현").melt(id_vars="표현", var_name="구분", value_name="점수")
+    chart = (
+        alt.Chart(long)
+        .mark_bar()
+        .encode(
+            x=alt.X("표현:N", sort=LANGS, title=None, axis=alt.Axis(labelAngle=0, labelLimit=120)),
+            xOffset=alt.XOffset("구분:N"),
+            y=alt.Y("점수:Q", scale=alt.Scale(domain=[0, 4]), axis=alt.Axis(values=[0, 1, 2, 3, 4], title="점수")),
+            color=alt.Color(
+                "구분:N",
+                scale=alt.Scale(domain=list(df.columns), range=["#2563eb", "#ea580c"]),
+                legend=alt.Legend(title=None, orient="bottom"),
+            ),
+            tooltip=["표현", "구분", "점수"],
+        )
+        .properties(height=300)
+    )
+    st.altair_chart(chart, width="stretch")
+    st.caption("막대가 높을수록 '그렇다'에 가까워요. 4점이 가장 높아요.")
+
+    top_r, _ = top_names(recv)
+    top_g, _ = top_names(give)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**내가 편하게 받는 표현**")
+        st.write(", ".join(top_r) if top_r else "뚜렷하게 높은 항목이 없어요. 여러 방식을 고르게 편안해해요.")
+    with c2:
+        st.markdown("**내가 자주 하는 표현**")
+        st.write(", ".join(top_g) if top_g else "뚜렷하게 높은 항목이 없어요. 여러 방식을 고르게 사용해요.")
+
+    # 2) 다름 발견
+    st.subheader("2. 나 안의 다름 찾기")
+    gaps = [(LANGS[i], recv[i], give[i]) for i in range(5) if abs(recv[i] - give[i]) >= GAP_THRESHOLD]
+    if gaps:
+        for name, r, g in gaps:
+            if r > g:
+                msg = f"**{name}**: 받을 때는 {r}점인데, 표현할 때는 {g}점이에요. 내가 편한 방식과 내가 하는 방식이 다를 수 있어요."
+            else:
+                msg = f"**{name}**: 표현할 때는 {g}점인데, 받을 때는 {r}점이에요. 내가 자주 하는 표현이 내가 편한 표현과 다를 수 있어요."
+            st.markdown("- " + msg)
+        st.caption("나 자신 안에서도 받는 방식과 표현하는 방식이 다를 수 있다면, 친구와 다른 것은 더 자연스러운 일이에요.")
+    else:
+        st.write("받을 때와 표현할 때의 점수가 비슷해요. 그래도 친구는 나와 다를 수 있어요. 짝과 비교해 보세요.")
+
+    # 3) 신체 접촉 안내 (항상 표시)
+    st.info(
+        "**신체 접촉은 상대가 원할 때만 해요.** 어떤 표현이든 싫으면 거절할 수 있고, "
+        "거절을 존중받을 권리가 있어요. 서로의 동의와 경계는 다음 시간에 더 이야기해요."
+    )
+
+    # 4) 짝과 이야기하기
+    st.subheader("3. 짝과 이야기해 보기")
+    st.caption("결과를 보여 주지 않아도 괜찮아요. 말하고 싶은 부분만 이야기해요.")
+    for q in PAIR_QUESTIONS:
+        st.markdown("- " + q)
+
+    if res["reflect"]:
+        st.subheader("내가 쓴 한 줄 성찰")
+        st.write(res["reflect"])
+        st.caption("공유하고 싶을 때만 선생님이 안내하는 패들렛에 올려요. (결과 점수는 올리지 않아도 돼요.)")
+
+    with st.expander("점수 자세히 보기"):
+        detail = df.copy()
+        detail.insert(0, "설명", [LANG_DESC[n] for n in LANGS])
+        st.dataframe(detail, width="stretch")
+
+    st.divider()
+    st.markdown("**다음 활동:** 오늘 알게 된 점을 바탕으로 '사람마다 사랑을 표현하고 받아들이는 방식은 ___'로 시작하는 한 문장을 써 보세요.")
+    st.button("처음부터 다시 하기", on_click=reset_all)
+
+
+if "result" in st.session_state:
+    render_result()
+else:
+    render_form()
